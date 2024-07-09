@@ -1,4 +1,4 @@
-# ClEval: Command-line tool for evaluating classifier predictions vs. targets 
+# clEval: Command-line tool for evaluating classifier predictions vs. targets 
 
 ### Author: Matthijs Westera
 
