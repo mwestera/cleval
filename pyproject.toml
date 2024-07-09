@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cleval"
+version = "0.1"
+authors = [{name="Matthijs Westera", email="m.westera@hum.leidenuniv.nl"}]
+description = "Command-line utility evaluating classifiers: comparing predicted values to target values."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["scikit-learn", "matplotlib", "seaborn", "pandas", "reportlab", "tabulate"]
+
+
+[project.scripts]
+cleval = "cleval:main"
+
+[project.urls]
+"Homepage" = "https://github.com/mwestera/cleval"
+"Bug Tracker" = "https://github.com/mwestera/cleval/issues"
+
