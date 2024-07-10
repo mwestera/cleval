@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report
 import argparse
-from io import StringIO, BytesIO
+from io import BytesIO
 
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
@@ -37,6 +37,27 @@ Or with piping:
 $ cat preds.txt | cleval - targs.txt --pdf report.pdf > metrics.json
 
 """
+
+
+
+def main():
+    parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
+    parser.add_argument('true', type=argparse.FileType('r'), help='File containing predicted classes, or - for stdin.')
+    parser.add_argument('pred', type=argparse.FileType('r'), nargs='?', default=None, help='File containing true classes, or - for stdin; default None, exploring only predictions.')
+    parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
+
+    args = parser.parse_args()
+
+    file_true = sys.stdin if args.true == '-' else args.true
+    file_pred = sys.stdin if args.pred == '-' else args.pred
+
+    y_true = [line.strip() for line in file_true]
+    y_pred = [line.strip() for line in file_pred] if file_pred else y_true  # TODO: Rather set to None, and make evaluate() handle it...
+
+    result = evaluate(y_pred, y_true, args.pdf)
+
+    print(json.dumps(result))
+
 
 
 def evaluate(y_pred, y_true, output_pdf=None) -> dict:
@@ -115,21 +136,6 @@ def read_input(file):
         with open(file, 'r') as f:
             return [line.strip() for line in f.readlines()]
 
-
-def main():
-    parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
-    parser.add_argument('y_pred', type=str, nargs='?', default='-', help='File containing y_pred, default - (stdin)')
-    parser.add_argument('y_true', type=str, nargs='?', default='-', help='File containing y_true, default None, to explore only the predictions')
-    parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
-
-    args = parser.parse_args()
-
-    y_pred = read_input(args.y_pred)
-    y_true = y_pred if args.y_pred == args.y_true == '-' else read_input(args.y_true)
-
-    result = evaluate(y_pred, y_true, args.pdf)
-
-    print(json.dumps(result))
 
 
 if __name__ == '__main__':
