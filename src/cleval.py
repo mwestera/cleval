@@ -114,12 +114,13 @@ def main():
     if y_pred and y_prob:
         assert len(y_pred) == len(y_prob)
 
-    record_for_pdf = {}
+    record_for_pdf = {
+    }
 
     result = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
     print(json.dumps(result))
 
-    if y_prob:  # TODO
+    if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
         pass
         # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
 
@@ -128,8 +129,7 @@ def main():
 
     if args.pdf:  # TODO do something with record_for_pdf
         pass
-
-
+        # write_pdf_report(y_true, y_pred, confusion_matrix_df, labels, output_pdf)
 
 
 def probs_to_choices(y_pred_probs: list[list[float]], labels: list[str], is_multilabel: bool = False, probs_threshold: float = .5):
@@ -150,7 +150,7 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
                          y_pred: list[set[str]] | list[str] | None,
                          labels: list[str],
                          is_multilabel: bool = False,
-                         output_pdf: bool = None) -> dict:
+                         record: dict = None) -> dict:
 
     if y_pred is None:
         y_pred = y_true
@@ -162,8 +162,8 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
     logging.info('Confusion table:\n')
     logging.info(confusion_matrix_df)
 
-    if output_pdf:
-        write_pdf_report(y_true, y_pred, confusion_matrix_df, labels, output_pdf)
+    if record:
+        pass  # TODO record some stuff
 
     return classification_report(y_true, y_pred, target_names=labels, output_dict=True)
 
