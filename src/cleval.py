@@ -44,10 +44,11 @@ $ cat preds.txt | cleval - targs.txt --pdf report.pdf > metrics.json
 
 # TODO: Second choices, proba, and write examples to html/pdf
 
+
 def main():
     parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
-    parser.add_argument('true', type=argparse.FileType('r'), help='File containing predicted classes, or - for stdin.')
-    parser.add_argument('pred', type=argparse.FileType('r'), nargs='?', default=None, help='File containing true classes, or - for stdin; default None, exploring only predictions.')
+    parser.add_argument('true', type=argparse.FileType('r'), nargs='?', help='File containing true classes, or - for stdin; default None, exploring only predictions.')
+    parser.add_argument('pred', type=argparse.FileType('r'), default=None, help='File containing predicted classes, or - for stdin.')
     parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from true otherwise.')
     parser.add_argument('--prob', action='store_true', help='If pred file contains raw probabilities instead of labels; inferred from pred otherwise.')
     parser.add_argument('--labels', nargs='*', type=str, default=[], help='Classification labels (separated by spaces); inferred from true otherwise.')
@@ -78,20 +79,18 @@ def main():
                 y_pred = y_pred[1:]
             y_pred = [[float(i) for i in row] for row in y_pred]
             if not args.prob:
-                logging.warning('--prob is inferred.')
                 args.prob = True
+                logging.warning('--prob is inferred.')
             if not args.labels:
-                logging.warning('--labels inferred from first row of predictions.')
                 args.labels = first_row
+                logging.warning(f'--labels inferred from first row of predictions: {args.labels}')
         except ValueError as e:
             if args.prob:
                 raise e
             y_pred = [set(row) for row in y_pred]
-
         if not args.multi and not args.prob:
             assert all(len(l) == 1 for l in y_pred)
             y_pred = list(itertools.chain(*y_pred))
-
         assert len(y_true) == len(y_pred)
 
     # Infer labels if still needed:
@@ -99,27 +98,37 @@ def main():
         args.labels = sorted(set(y_true)) if not args.multi else sorted(set(itertools.chain(*y_true)))
         logging.warning(f'--labels are inferred: {args.labels}')
 
-    result = evaluate(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, is_probs=args.prob, probs_threshold=.5, output_pdf=args.pdf)
+    if y_pred and args.prob:
+        y_probs = y_pred
+        y_pred = probs_to_choices(y_probs, args.labels, is_multilabel=args.multi, probs_threshold=.5)  # TODO: Expose probs threshold as arg?
+
+    result = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, output_pdf=args.pdf)
 
     print(json.dumps(result))
 
 
-def evaluate(y_true, y_pred, labels, is_multilabel=False, is_probs=False, probs_threshold=.5, output_pdf=None) -> dict:
+def probs_to_choices(y_pred_probs: list[list[float]], labels: list[str], is_multilabel: bool = False, probs_threshold: float = .5):
+
+    def probs_to_choices(probs):
+        indexed_probs = sorted((prob, i) for i, prob in enumerate(probs))
+        if is_multilabel:
+            return {labels[i] for prob, i in indexed_probs if prob >= probs_threshold}
+        else:
+            best_index = indexed_probs[-1][1]
+            return labels[best_index]
+
+    y_pred = [probs_to_choices(probs) for probs in y_pred_probs]
+    return y_pred
+
+
+def evaluate_categorical(y_true: list[set[str]] | list[str],
+                         y_pred: list[set[str]] | list[str] | None,
+                         labels: list[str],
+                         is_multilabel: bool = False,
+                         output_pdf: bool = None) -> dict:
 
     if y_pred is None:
         y_pred = y_true
-
-    if is_probs:
-        def probs_to_choices(probs):
-            indexed_probs = sorted((prob, i) for i, prob in enumerate(probs))
-            if is_multilabel:
-                return {labels[i] for prob, i in indexed_probs if prob >= probs_threshold}
-            else:
-                best_index = indexed_probs[-1][1]
-                return labels[best_index]
-
-        y_pred_probs = y_pred
-        y_pred = [probs_to_choices(probs) for probs in y_pred_probs]
 
     report = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
     logging.info(report)
@@ -134,7 +143,7 @@ def evaluate(y_true, y_pred, labels, is_multilabel=False, is_probs=False, probs_
     return classification_report(y_true, y_pred, target_names=labels, output_dict=True)
 
 
-def make_classification_report(y_true, y_pred, is_multilabel, labels) -> str:
+def make_classification_report(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> str:
     if is_multilabel:
         mlb = MultiLabelBinarizer()
         y_true = mlb.fit_transform(y_true)
@@ -144,7 +153,7 @@ def make_classification_report(y_true, y_pred, is_multilabel, labels) -> str:
     return report
 
 
-def make_confusion_matrix(y_true, y_pred, is_multilabel, labels) -> pandas.DataFrame:
+def make_confusion_matrix(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> pandas.DataFrame:
     if is_multilabel:
         y_true, y_pred = collapse_multilabel(y_true, y_pred)
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
