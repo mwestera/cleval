@@ -1,4 +1,6 @@
 import sys
+
+import pandas
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -57,61 +59,99 @@ def main():
     file_pred = sys.stdin if args.pred == '-' else args.pred
 
     y_true = [set(row) for row in csv.reader(file_true)]
-    y_pred = [set(row) for row in csv.reader(file_pred)] if file_pred else None
 
-    # if only "but" was a keyword...
-    if not args.multi and any(len(row) > 1 for row in y_true) or any(len(row) > 1 for row in y_pred):
+    if not args.multi and any(len(row) > 1 for row in y_true):
         logging.warning('--multi is inferred.')
         args.multi = True
 
     if not args.multi:
-        y_true = list(itertools.chain(y_true))  # flatten all the singletons
-        y_pred = list(itertools.chain(y_pred))
+        assert all(len(l) == 1 for l in y_true)
+        y_true = list(itertools.chain(*y_true))
 
-    if not args.prob and all(isinstance(i, float) for row in y_pred for i in row):
-        logging.warning('--prob is inferred.')
-        args.prob = True
+    # Read y_pred, try if probabilities:
+    y_pred = None
+    if file_pred:
+        y_pred = [list(row) for row in csv.reader(file_pred)]
+        try:
+            if not args.labels:
+                first_row = y_pred[0]
+                y_pred = y_pred[1:]
+            y_pred = [[float(i) for i in row] for row in y_pred]
+            if not args.prob:
+                logging.warning('--prob is inferred.')
+                args.prob = True
+            if not args.labels:
+                logging.warning('--labels inferred from first row of predictions.')
+                args.labels = first_row
+        except ValueError as e:
+            if args.prob:
+                raise e
+            y_pred = [set(row) for row in y_pred]
 
+        if not args.multi and not args.prob:
+            assert all(len(l) == 1 for l in y_pred)
+            y_pred = list(itertools.chain(*y_pred))
+
+        assert len(y_true) == len(y_pred)
+
+    # Infer labels if still needed:
     if not args.labels:
         args.labels = sorted(set(y_true)) if not args.multi else sorted(set(itertools.chain(*y_true)))
         logging.warning(f'--labels are inferred: {args.labels}')
 
-    result = evaluate(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, is_probs=args.prob, output_pdf=args.pdf)
+    result = evaluate(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, is_probs=args.prob, probs_threshold=.5, output_pdf=args.pdf)
 
     print(json.dumps(result))
 
 
+def evaluate(y_true, y_pred, labels, is_multilabel=False, is_probs=False, probs_threshold=.5, output_pdf=None) -> dict:
 
-def evaluate(y_true_raw, y_pred_raw, labels, is_multilabel=False, is_probs=False, output_pdf=None) -> dict:
+    if y_pred is None:
+        y_pred = y_true
 
-    if y_pred_raw is None:
-        y_pred_raw = y_true_raw
+    if is_probs:
+        def probs_to_choices(probs):
+            indexed_probs = sorted((prob, i) for i, prob in enumerate(probs))
+            if is_multilabel:
+                return {labels[i] for prob, i in indexed_probs if prob >= probs_threshold}
+            else:
+                best_index = indexed_probs[-1][1]
+                return labels[best_index]
 
-    # TODO handle is_probs
+        y_pred_probs = y_pred
+        y_pred = [probs_to_choices(probs) for probs in y_pred_probs]
 
-    if is_multilabel:
-        mlb = MultiLabelBinarizer()
-        y_true, y_pred = collapse_multilabel(y_true_raw, y_pred_raw)
-        y_true_report = mlb.fit_transform(y_true_raw)
-        y_pred_report = mlb.transform(y_pred_raw)
-    else:
-        y_true_report, y_pred_report = y_true, y_pred = y_true_raw, y_pred_raw
-
-    report = classification_report(y_true_report, y_pred_report, target_names=labels)
+    report = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
     logging.info(report)
 
-    conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
+    confusion_matrix_df = make_confusion_matrix(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
     logging.info('Confusion table:\n')
+    logging.info(confusion_matrix_df)
 
+    if output_pdf:
+        write_pdf_report(y_true, y_pred, confusion_matrix_df, labels, output_pdf)
+
+    return classification_report(y_true, y_pred, target_names=labels, output_dict=True)
+
+
+def make_classification_report(y_true, y_pred, is_multilabel, labels) -> str:
+    if is_multilabel:
+        mlb = MultiLabelBinarizer()
+        y_true = mlb.fit_transform(y_true)
+        y_pred = mlb.transform(y_pred)
+
+    report = classification_report(y_true, y_pred, target_names=labels)
+    return report
+
+
+def make_confusion_matrix(y_true, y_pred, is_multilabel, labels) -> pandas.DataFrame:
+    if is_multilabel:
+        y_true, y_pred = collapse_multilabel(y_true, y_pred)
+    conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     conf_matrix_df = pd.DataFrame(conf_matrix, index=labels, columns=labels)
     conf_matrix_df.index.name = 'True:'
     conf_matrix_df.columns.name = 'Predicted:'
-    logging.info(conf_matrix_df)
-
-    if output_pdf:
-        write_pdf_report(y_true, y_pred, conf_matrix, labels, output_pdf)
-
-    return classification_report(y_true_report, y_pred_report, target_names=labels, output_dict=True)
+    return conf_matrix_df
 
 
 def collapse_multilabel(y_true, y_pred):
