@@ -1,7 +1,6 @@
 import sys
 
 import pandas
-import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix, classification_report, multilabel_confusion_matrix
@@ -39,72 +38,98 @@ Or with piping:
 
 $ cat preds.txt | cleval - targs.txt --pdf report.pdf > metrics.json
 
-"""
+"""  # TODO Update instructions and README.md
 
 
 # TODO: Second choices, proba, and write examples to html/pdf
 
-
 def main():
     parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
-    parser.add_argument('true', type=argparse.FileType('r'), nargs='?', help='File containing true classes, or - for stdin; default None, exploring only predictions.')
-    parser.add_argument('pred', type=argparse.FileType('r'), default=None, help='File containing predicted classes, or - for stdin.')
-    parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from true otherwise.')
-    parser.add_argument('--prob', action='store_true', help='If pred file contains raw probabilities instead of labels; inferred from pred otherwise.')
-    parser.add_argument('--labels', nargs='*', type=str, default=[], help='Classification labels (separated by spaces); inferred from true otherwise.')
+    parser.add_argument('--csv', type=argparse.FileType('r'), nargs='?', help='.csv file with columns --true, --pred, --prob, --item')
+    parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (,-separated); else, file containing true classes; if not given, exploring only predictions.')
+    parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (,-separated); else, .csv file containing predicted classes.')
+    parser.add_argument('--prob', type=str, required=False, default=None, help='If --csv, column name of predicted probabilities (,-separated); else, .csv file containing probabilities.')
+    parser.add_argument('--item', type=str, required=False, default=None, help='If --csv, column name of item content (e.g., text or sentence categorized); else file containing items one per line.')
+
+    parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from --true otherwise.')
+    parser.add_argument('--labels', nargs='*', type=str, default=[], help='Classification labels (separated by spaces); inferred from --true or --prob otherwise.')
     parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
 
     args = parser.parse_args()
 
-    file_true = sys.stdin if args.true == '-' else args.true
-    file_pred = sys.stdin if args.pred == '-' else args.pred
+    y_true = y_pred = y_prob = items = None
 
-    y_true = [set(row) for row in csv.reader(file_true)]
+    if args.csv and args.prob and not args.labels:
+        raise ValueError('--labels must be specified when --prob comes from column in --csv.')
+
+    if args.csv:
+        df = pandas.read_csv(args.csv)
+        y_true = [row.split(',') for row in df[args.true]] if args.true else None
+        y_pred = [row.split(',') for row in df[args.pred]] if args.pred else None
+        y_prob = [[float(i) for i in row.split(',')] for row in df[args.prob]] if args.prob else None
+        items = df[args.item] if args.item else None
+    else:
+        if args.true:
+            with open(args.true, 'r') as file:
+                y_true = [set(row) for row in csv.reader(file)]
+        if args.pred:
+            with open(args.pred, 'r') as file:
+                y_pred = [set(row) for row in csv.reader(file)]
+        if args.prob:
+            with open(args.prob, 'r') as file:
+                y_prob = [row for row in csv.reader(file)]
+            if not args.labels:
+                args.labels = y_prob[0]
+                y_prob = y_prob[1:]
+                logging.warning(f'--labels inferred from first row of probabilities: {args.labels}')
+            y_prob = [[float(i) for i in row] for row in y_prob]
+        if args.item:
+            with open(args.item, 'r') as file:
+                items = [line.strip() for line in file]
 
     if not args.multi and any(len(row) > 1 for row in y_true):
-        logging.warning('--multi is inferred.')
+        logging.warning('--multi is inferred from --true.')
         args.multi = True
 
     if not args.multi:
-        assert all(len(l) == 1 for l in y_true)
-        y_true = list(itertools.chain(*y_true))
-
-    # Read y_pred, try if probabilities:
-    y_pred = None
-    if file_pred:
-        y_pred = [list(row) for row in csv.reader(file_pred)]
-        try:
-            if not args.labels:
-                first_row = y_pred[0]
-                y_pred = y_pred[1:]
-            y_pred = [[float(i) for i in row] for row in y_pred]
-            if not args.prob:
-                args.prob = True
-                logging.warning('--prob is inferred.')
-            if not args.labels:
-                args.labels = first_row
-                logging.warning(f'--labels inferred from first row of predictions: {args.labels}')
-        except ValueError as e:
-            if args.prob:
-                raise e
-            y_pred = [set(row) for row in y_pred]
-        if not args.multi and not args.prob:
+        if y_true:
+            assert all(len(l) == 1 for l in y_true)
+            y_true = list(itertools.chain(*y_true))
+        if y_pred:
             assert all(len(l) == 1 for l in y_pred)
             y_pred = list(itertools.chain(*y_pred))
-        assert len(y_true) == len(y_pred)
 
     # Infer labels if still needed:
     if not args.labels:
         args.labels = sorted(set(y_true)) if not args.multi else sorted(set(itertools.chain(*y_true)))
         logging.warning(f'--labels are inferred: {args.labels}')
 
-    if y_pred and args.prob:
-        y_probs = y_pred
-        y_pred = probs_to_choices(y_probs, args.labels, is_multilabel=args.multi, probs_threshold=.5)  # TODO: Expose probs threshold as arg?
+    if y_prob and not y_pred:
+        y_pred = probs_to_choices(y_prob, args.labels, is_multilabel=args.multi, probs_threshold=.5)  # TODO: Expose probs threshold as arg?
 
-    result = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, output_pdf=args.pdf)
+    if y_true and y_pred:
+        assert len(y_true) == len(y_pred)
+    if y_true and y_prob:
+        assert len(y_true) == len(y_prob)
+    if y_pred and y_prob:
+        assert len(y_pred) == len(y_prob)
 
+    record_for_pdf = {}
+
+    result = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
     print(json.dumps(result))
+
+    if y_prob:  # TODO
+        pass
+        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
+
+    if items:  # TODO print some examples
+        pass
+
+    if args.pdf:  # TODO do something with record_for_pdf
+        pass
+
+
 
 
 def probs_to_choices(y_pred_probs: list[list[float]], labels: list[str], is_multilabel: bool = False, probs_threshold: float = .5):
@@ -157,13 +182,13 @@ def make_confusion_matrix(y_true, y_pred, is_multilabel: bool, labels: list[str]
     if is_multilabel:
         y_true, y_pred = collapse_multilabel(y_true, y_pred)
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
-    conf_matrix_df = pd.DataFrame(conf_matrix, index=labels, columns=labels)
+    conf_matrix_df = pandas.DataFrame(conf_matrix, index=labels, columns=labels)
     conf_matrix_df.index.name = 'True:'
     conf_matrix_df.columns.name = 'Predicted:'
     return conf_matrix_df
 
 
-def collapse_multilabel(y_true, y_pred):
+def collapse_multilabel(y_true: list[set], y_pred: list[set]) -> tuple[list, list]:
     """
     >>> collapse_multilabel([{1, 2}, {2, 3, 4}], [{1, 3}, {4, 5}])
     ([1, 2, 4, 3], [1, 3, 4, 5])
@@ -202,9 +227,9 @@ def write_pdf_report(y_true, y_pred, conf_matrix, labels, out_path) -> None:
     c.drawText(text)
 
     # Histogram
-    combined_data = pd.DataFrame({
-        'y_true': pd.Categorical(y_true, categories=labels, ordered=True),
-        'y_pred': pd.Categorical(y_pred, categories=labels, ordered=True),
+    combined_data = pandas.DataFrame({
+        'y_true': pandas.Categorical(y_true, categories=labels, ordered=True),
+        'y_pred': pandas.Categorical(y_pred, categories=labels, ordered=True),
     })
 
     plt.figure(figsize=(13.5, 5))
@@ -225,7 +250,7 @@ def write_pdf_report(y_true, y_pred, conf_matrix, labels, out_path) -> None:
 
     c.showPage()
     c.save()
-    logger.info(f"\nPDF report saved as {pdf_filename}")
+    logging.info(f"\nPDF report saved as {pdf_filename}")
 
 
 
