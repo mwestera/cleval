@@ -18,6 +18,7 @@ import json
 import csv
 
 import random
+import textwrap
 
 import itertools
 
@@ -117,19 +118,18 @@ def main():
     record_for_pdf = {
     }
 
-    result = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
+    result, confusion_mtrx = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi)
     print(json.dumps(result))
 
     if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
         pass
         # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
 
-    if texts:  # TODO print some examples
-        pass
+    if texts and y_pred and y_true:
+        print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
 
-    if args.pdf:  # TODO do something with record_for_pdf
-        pass
-        # write_pdf_report(y_true, y_pred, confusion_matrix_df, labels, output_pdf)
+    if args.pdf:    # TODO To be removed/refactored
+        write_pdf_report(y_true, y_pred, confusion_mtrx.values, args.labels, args.pdf)
 
 
 def probs_to_choices(y_pred_probs: list[list[float]], labels: list[str], is_multilabel: bool = False, probs_threshold: float = .5):
@@ -150,32 +150,46 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
                          y_pred: list[set[str]] | list[str] | None,
                          labels: list[str],
                          is_multilabel: bool = False,
-                         record: dict = None) -> dict:
+                         record: dict = None) -> tuple[dict, pandas.DataFrame]:
 
     if y_pred is None:
         y_pred = y_true
 
-    report = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
+    report, scores_dict = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
     logging.info(report)
 
     confusion_matrix_df = make_confusion_matrix(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
     logging.info('Confusion table:\n')
     logging.info(confusion_matrix_df)
 
-    if record:
-        pass  # TODO record some stuff
-
-    return classification_report(y_true, y_pred, target_names=labels, output_dict=True)
+    return scores_dict, confusion_matrix_df
 
 
-def make_classification_report(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> str:
+def print_errors(y_true, y_pred, texts, y_prob, labels):
+    df = pandas.DataFrame({'true': y_true, 'pred': y_pred, 'text': texts,'prob': y_prob})
+    df['correct'] = df['true'] == df['pred']
+    df = df.loc[~df['correct']]
+    for label, group in df.groupby('true'):
+        print(f'\n\n## Actual label: {label}')
+        for i, row in group.iterrows():
+            text = textwrap.fill(row["text"], initial_indent='> ', subsequent_indent='> ')
+            if row['prob']:
+                pred_prob = row['prob'][labels.index(row['pred'])]
+                true_prob = row['prob'][labels.index(row['true'])]
+                pred_prob_str = f' ({pred_prob:.2f})'
+                true_prob_str = f' ({true_prob:.2f})'
+            logging.info(f'\nPredicted: {row["pred"]}{pred_prob_str} / actual {row["true"]}{true_prob_str}\n{text}')
+
+
+def make_classification_report(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> tuple[str, dict]:
     if is_multilabel:
         mlb = MultiLabelBinarizer()
         y_true = mlb.fit_transform(y_true)
         y_pred = mlb.transform(y_pred)
 
     report = classification_report(y_true, y_pred, target_names=labels)
-    return report
+    scores_dict = classification_report(y_true, y_pred, target_names=labels, output_dict=True)
+    return report, scores_dict
 
 
 def make_confusion_matrix(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> pandas.DataFrame:
@@ -183,7 +197,7 @@ def make_confusion_matrix(y_true, y_pred, is_multilabel: bool, labels: list[str]
         y_true, y_pred = collapse_multilabel(y_true, y_pred)
     conf_matrix = confusion_matrix(y_true, y_pred, labels=labels)
     conf_matrix_df = pandas.DataFrame(conf_matrix, index=labels, columns=labels)
-    conf_matrix_df.index.name = 'True:'
+    conf_matrix_df.index.name = 'Actual:'
     conf_matrix_df.columns.name = 'Predicted:'
     return conf_matrix_df
 
