@@ -115,15 +115,14 @@ def main():
     if y_pred and y_prob:
         assert len(y_pred) == len(y_prob)
 
-    record_for_pdf = {
-    }
+    logging.info('# Classification evaluation')
 
     result, confusion_mtrx = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi)
     print(json.dumps(result))
 
     if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
         pass
-        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
+        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
 
     if texts and y_pred and y_true:
         print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
@@ -152,25 +151,30 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
                          is_multilabel: bool = False,
                          record: dict = None) -> tuple[dict, pandas.DataFrame]:
 
+
     if y_pred is None:
         y_pred = y_true
 
     report, scores_dict = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
+    logging.info('\n## Scores:\n\n```')
     logging.info(report)
+    logging.info('```\n')
 
     confusion_matrix_df = make_confusion_matrix(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
-    logging.info('Confusion table:\n')
+    logging.info('\n## Confusion table:\n\n```')
     logging.info(confusion_matrix_df)
+    logging.info('```\n')
 
     return scores_dict, confusion_matrix_df
 
 
 def print_errors(y_true, y_pred, texts, y_prob, labels):
+    logging.info('## Errors')
     df = pandas.DataFrame({'true': y_true, 'pred': y_pred, 'text': texts,'prob': y_prob})
     df['correct'] = df['true'] == df['pred']
     df = df.loc[~df['correct']]
     for label, group in df.groupby('true'):
-        print(f'\n\n## Actual label: {label}')
+        logging.info(f'\n\n### Actual label: {label}')
         for i, row in group.iterrows():
             text = textwrap.fill(row["text"], initial_indent='> ', subsequent_indent='> ')
             if row['prob']:
