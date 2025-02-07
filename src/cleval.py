@@ -47,14 +47,16 @@ $ cat preds.txt | cleval - targs.txt --pdf report.pdf > metrics.json
 def main():
     parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
     parser.add_argument('--csv', type=argparse.FileType('r'), required=False, default=None, help='.csv file with columns --true, --pred, --prob, --item; "-" is stdin')
-    parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (,-separated); else, file containing true classes.')
-    parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (,-separated); else, .csv file containing predicted classes; if not given, exploring only true classes.')
-    parser.add_argument('--prob', type=str, required=False, default=None, help='If --csv, column name of predicted probabilities (,-separated); else, .csv file containing probabilities.')
+    parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (;-separated); else, .csv file containing true classes.')
+    parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (;-separated); else, .csv file containing predicted classes; if not given, exploring only true classes.')
+    parser.add_argument('--prob', type=str, required=False, default=None, help='If --csv, column name of predicted probabilities (;-separated); else, .csv file containing probabilities.')
     parser.add_argument('--text', type=str, required=False, default=None, help='If --csv, column name of categorized content (e.g., text or sentence categorized); else file containing items one per line.')
 
-    parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from --true otherwise.')
     parser.add_argument('--labels', nargs='*', type=str, default=[], help='Classification labels (separated by spaces); inferred from --true or --prob otherwise.')
+    parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from --true otherwise.')
+
     parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
+    parser.add_argument('--scores', action='store_true', help='To print only a JSON dict of scores. Otherwise full markdown report.')
 
     args = parser.parse_args()
 
@@ -68,10 +70,10 @@ def main():
 
     if args.csv:
         df = pandas.read_csv(args.csv)
-        y_true = [row.split(',') for row in df[args.true]] if args.true else None
-        y_pred = [row.split(',') for row in df[args.pred]] if args.pred else None
-        y_prob = [[float(i) for i in row.split(',')] for row in df[args.prob]] if args.prob else None
-        texts = df[args.text] if args.text else None
+        y_true = [set(row.split(',')) for row in df[args.true]] if args.true else None
+        y_pred = [set(row.split(',')) for row in df[args.pred]] if args.pred else None
+        y_prob = [[float(i) for i in row.split(';')] for row in df[args.prob]] if args.prob else None
+        texts = [text for text in df[args.text]] if args.text else None
     else:
         if args.true:
             with open(args.true, 'r') as file:
@@ -118,16 +120,29 @@ def main():
     if y_pred and y_prob:
         assert len(y_pred) == len(y_prob)
 
-    logging.info('# Classification evaluation')
+    report, scores, confusion_mtrx = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi)
 
-    result, confusion_mtrx = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi)
-    print(json.dumps(result))
+    if args.scores:
+        print(json.dumps(scores))
+        quit()
+
+
+    print('# Classification evaluation')
+
+    print('\n## Scores:\n\n```')
+    print(report)
+    print('```\n')
+
+    print('\n## Confusion table:\n\n```')
+    print(confusion_mtrx)
+    print('```\n')
 
     if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
         pass
         # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
 
     if texts and y_pred and y_true:
+        print('\n## Errors')
         print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
 
     if args.pdf:    # TODO To be removed/refactored
@@ -161,33 +176,31 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
         y_pred = y_true
 
     report, scores_dict = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
-    logging.info('\n## Scores:\n\n```')
-    logging.info(report)
-    logging.info('```\n')
 
     confusion_matrix_df = make_confusion_matrix(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
-    logging.info('\n## Confusion table:\n\n```')
-    logging.info(confusion_matrix_df)
-    logging.info('```\n')
 
-    return scores_dict, confusion_matrix_df
+    return report, scores_dict, confusion_matrix_df
 
 
 def print_errors(y_true, y_pred, texts, y_prob, labels):
-    logging.info('## Errors')
-    df = pandas.DataFrame({'true': y_true, 'pred': y_pred, 'text': texts,'prob': y_prob})
+    df = pandas.DataFrame({'true': map(sorted, y_true), 'pred': map(sorted, y_pred), 'text': texts, 'prob': y_prob})
     df['correct'] = df['true'] == df['pred']
     df = df.loc[~df['correct']]
-    for label, group in df.groupby('true'):
-        logging.info(f'\n\n### Actual label: {label}')
+    df['true_str'] = [','.join(t) for t in df['true']]
+    df['pred_str'] = [','.join(t) for t in df['pred']]
+    if y_prob:
+        df['pred_prob'] = [[probs[labels.index(l)] for l in preds] for probs, preds in zip(df['prob'], df['pred'])]
+        df['true_prob'] = [[probs[labels.index(l)] for l in trues] for probs, trues in zip(df['prob'], df['true'])]
+    for label, group in df.groupby('true_str'):
+        print(f'\n\n### Actual label: {label}')
+        if y_prob:
+            group = group.sort_values(by=['true_prob'], ascending=False)
         for i, row in group.iterrows():
             text = textwrap.fill(row["text"], initial_indent='> ', subsequent_indent='> ')
-            if row['prob']:
-                pred_prob = row['prob'][labels.index(row['pred'])]
-                true_prob = row['prob'][labels.index(row['true'])]
-                pred_prob_str = f' ({pred_prob:.2f})'
-                true_prob_str = f' ({true_prob:.2f})'
-            logging.info(f'\nPredicted: {row["pred"]}{pred_prob_str} / actual {row["true"]}{true_prob_str}\n{text}')
+            if y_prob:
+                pred_prob_str = f' ({", ".join(f"{p:.2f}" for p in row["pred_prob"])})'
+                true_prob_str = f' ({", ".join(f"{p:.2f}" for p in row["true_prob"])})'
+            print(f'\nPredicted: {row["pred_str"]}{pred_prob_str} || Actual: {row["true_str"]}{true_prob_str}\n{text}')
 
 
 def make_classification_report(y_true, y_pred, is_multilabel: bool, labels: list[str]) -> tuple[str, dict]:
