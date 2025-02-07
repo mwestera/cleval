@@ -46,9 +46,9 @@ $ cat preds.txt | cleval - targs.txt --pdf report.pdf > metrics.json
 
 def main():
     parser = argparse.ArgumentParser(description='Compare precomputed lists of predictions vs targets, logging a simple classification report, optionally PDF, and outputting json.')
-    parser.add_argument('--csv', type=argparse.FileType('r'), nargs='?', help='.csv file with columns --true, --pred, --prob, --item')
-    parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (,-separated); else, file containing true classes; if not given, exploring only predictions.')
-    parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (,-separated); else, .csv file containing predicted classes.')
+    parser.add_argument('--csv', type=argparse.FileType('r'), required=False, default=None, help='.csv file with columns --true, --pred, --prob, --item; "-" is stdin')
+    parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (,-separated); else, file containing true classes.')
+    parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (,-separated); else, .csv file containing predicted classes; if not given, exploring only true classes.')
     parser.add_argument('--prob', type=str, required=False, default=None, help='If --csv, column name of predicted probabilities (,-separated); else, .csv file containing probabilities.')
     parser.add_argument('--text', type=str, required=False, default=None, help='If --csv, column name of categorized content (e.g., text or sentence categorized); else file containing items one per line.')
 
@@ -57,6 +57,9 @@ def main():
     parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
 
     args = parser.parse_args()
+
+    if args.csv == '-':
+        args.csv = sys.stdin
 
     y_true = y_pred = y_prob = texts = None
 
@@ -115,15 +118,14 @@ def main():
     if y_pred and y_prob:
         assert len(y_pred) == len(y_prob)
 
-    record_for_pdf = {
-    }
+    logging.info('# Classification evaluation')
 
     result, confusion_mtrx = evaluate_categorical(y_true, y_pred, labels=args.labels, is_multilabel=args.multi)
     print(json.dumps(result))
 
     if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
         pass
-        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
+        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
 
     if texts and y_pred and y_true:
         print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
@@ -152,25 +154,32 @@ def evaluate_categorical(y_true: list[set[str]] | list[str],
                          is_multilabel: bool = False,
                          record: dict = None) -> tuple[dict, pandas.DataFrame]:
 
+    # print(results['label'].value_counts(dropna=False))
+    # print(results['label_pred'].value_counts(dropna=False))
+
     if y_pred is None:
         y_pred = y_true
 
     report, scores_dict = make_classification_report(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
+    logging.info('\n## Scores:\n\n```')
     logging.info(report)
+    logging.info('```\n')
 
     confusion_matrix_df = make_confusion_matrix(y_true, y_pred, is_multilabel=is_multilabel, labels=labels)
-    logging.info('Confusion table:\n')
+    logging.info('\n## Confusion table:\n\n```')
     logging.info(confusion_matrix_df)
+    logging.info('```\n')
 
     return scores_dict, confusion_matrix_df
 
 
 def print_errors(y_true, y_pred, texts, y_prob, labels):
+    logging.info('## Errors')
     df = pandas.DataFrame({'true': y_true, 'pred': y_pred, 'text': texts,'prob': y_prob})
     df['correct'] = df['true'] == df['pred']
     df = df.loc[~df['correct']]
     for label, group in df.groupby('true'):
-        print(f'\n\n## Actual label: {label}')
+        logging.info(f'\n\n### Actual label: {label}')
         for i, row in group.iterrows():
             text = textwrap.fill(row["text"], initial_indent='> ', subsequent_indent='> ')
             if row['prob']:
