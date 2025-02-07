@@ -49,7 +49,7 @@ def main():
     parser.add_argument('--true', type=str, required=False, default=None, help='If --csv, column name of true labels (,-separated); else, file containing true classes; if not given, exploring only predictions.')
     parser.add_argument('--pred', type=str, required=False, default=None, help='If --csv, column name of predicted labels (,-separated); else, .csv file containing predicted classes.')
     parser.add_argument('--prob', type=str, required=False, default=None, help='If --csv, column name of predicted probabilities (,-separated); else, .csv file containing probabilities.')
-    parser.add_argument('--item', type=str, required=False, default=None, help='If --csv, column name of item content (e.g., text or sentence categorized); else file containing items one per line.')
+    parser.add_argument('--text', type=str, required=False, default=None, help='If --csv, column name of categorized content (e.g., text or sentence categorized); else file containing items one per line.')
 
     parser.add_argument('--multi', action='store_true', help='To assume potentially multiple labels per item (multi-label classification), in which case true and pred files contain csv rows; inferred from --true otherwise.')
     parser.add_argument('--labels', nargs='*', type=str, default=[], help='Classification labels (separated by spaces); inferred from --true or --prob otherwise.')
@@ -57,7 +57,7 @@ def main():
 
     args = parser.parse_args()
 
-    y_true = y_pred = y_prob = items = None
+    y_true = y_pred = y_prob = texts = None
 
     if args.csv and args.prob and not args.labels:
         raise ValueError('--labels must be specified when --prob comes from column in --csv.')
@@ -67,7 +67,7 @@ def main():
         y_true = [row.split(',') for row in df[args.true]] if args.true else None
         y_pred = [row.split(',') for row in df[args.pred]] if args.pred else None
         y_prob = [[float(i) for i in row.split(',')] for row in df[args.prob]] if args.prob else None
-        items = df[args.item] if args.item else None
+        texts = df[args.text] if args.text else None
     else:
         if args.true:
             with open(args.true, 'r') as file:
@@ -83,9 +83,9 @@ def main():
                 y_prob = y_prob[1:]
                 logging.warning(f'--labels inferred from first row of probabilities: {args.labels}')
             y_prob = [[float(i) for i in row] for row in y_prob]
-        if args.item:
-            with open(args.item, 'r') as file:
-                items = [line.strip() for line in file]
+        if args.text:
+            with open(args.text, 'r') as file:
+                texts = [line.strip() for line in file]
 
     if not args.multi and any(len(row) > 1 for row in y_true):
         logging.warning('--multi is inferred from --true.')
@@ -124,7 +124,7 @@ def main():
         pass
         # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi, record=record_for_pdf)
 
-    if items:  # TODO print some examples
+    if texts:  # TODO print some examples
         pass
 
     if args.pdf:  # TODO do something with record_for_pdf
