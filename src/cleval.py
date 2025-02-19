@@ -24,6 +24,7 @@ import itertools
 
 logging.basicConfig(level=logging.INFO, format='')
 
+import collections
 
 """
 Author: Matthijs Westera
@@ -57,6 +58,7 @@ def main():
 
     parser.add_argument('--pdf', type=str, default=None, help='Path to write PDF report to.')
     parser.add_argument('--scores', action='store_true', help='To print only a JSON dict of scores. Otherwise full markdown report.')
+    parser.add_argument('--errors', action='store_true', help='To list all the errors at the end of the report.')
 
     args = parser.parse_args()
 
@@ -70,8 +72,8 @@ def main():
 
     if args.csv:
         df = pandas.read_csv(args.csv)
-        y_true = [set(row.split(',')) for row in df[args.true]] if args.true else None
-        y_pred = [set(row.split(',')) for row in df[args.pred]] if args.pred else None
+        y_true = [set(row.split(';')) for row in df[args.true]] if args.true else None
+        y_pred = [set(row.split(';')) for row in df[args.pred]] if args.pred else None
         y_prob = [[float(i) for i in row.split(';')] for row in df[args.prob]] if args.prob else None
         texts = [text for text in df[args.text]] if args.text else None
     else:
@@ -134,6 +136,10 @@ def main():
     print('```\n')
 
     print('\n## Confusion table:\n\n```')
+
+    if args.multi:
+        print('\nNote: Since multiple labels are allowed, predictions and true values are flattened and aligned before computing this table. Hence, one cannot directly compute precision/recall from these values.\n\n```')
+
     print(confusion_mtrx)
     print('```\n')
 
@@ -141,9 +147,14 @@ def main():
         pass
         # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
 
-    if texts and y_pred and y_true:
-        print('\n## Errors')
-        print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
+    if args.errors:
+        if texts and y_pred and y_true:
+            print('\n## Errors')
+
+            if args.multi:
+                print('\nNote: Since multiple labels are allowed, the list below includes cases where the model predicts too many or too few labels, but including the correct one. (The scores above handle such cases in a smarter way.)')
+
+            print_errors(y_true, y_pred, texts, y_prob, labels=args.labels)
 
     if args.pdf:    # TODO To be removed/refactored
         write_pdf_report(y_true, y_pred, confusion_mtrx.values, args.labels, args.pdf)
@@ -208,6 +219,7 @@ def make_classification_report(y_true, y_pred, is_multilabel: bool, labels: list
         mlb = MultiLabelBinarizer()
         y_true = mlb.fit_transform(y_true)
         y_pred = mlb.transform(y_pred)
+        labels = mlb.classes_
 
     report = classification_report(y_true, y_pred, target_names=labels)
     scores_dict = classification_report(y_true, y_pred, target_names=labels, output_dict=True)
