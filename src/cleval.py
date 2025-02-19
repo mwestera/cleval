@@ -24,7 +24,6 @@ import itertools
 
 logging.basicConfig(level=logging.INFO, format='')
 
-import collections
 
 """
 Author: Matthijs Westera
