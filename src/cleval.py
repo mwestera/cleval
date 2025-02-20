@@ -134,7 +134,7 @@ def main():
     print(report)
     print('```\n')
 
-    print('\n## Confusion table:\n\n```')
+    print('\n## Confusion table:\n\n')
 
     if args.multi:
         print('\nNote: Since multiple labels are allowed, predictions and true values are flattened and aligned before computing this table. Hence, one cannot directly compute precision/recall from these values.\n\n```')
