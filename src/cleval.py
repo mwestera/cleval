@@ -186,7 +186,6 @@ def evaluate_probabilistic(y_true, y_pred, y_prob, labels, is_multilabel):
 
         score = roc_auc_score(y_true_for_label, probs_for_label)
 
-        # Compute ROC curve
         fpr, tpr, thresholds = roc_curve(y_true=y_true_for_label, y_score=probs_for_label)
 
         f1_scores = []
