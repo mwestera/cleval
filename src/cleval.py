@@ -3,7 +3,7 @@ import sys
 import pandas
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report, multilabel_confusion_matrix
+from sklearn.metrics import confusion_matrix, classification_report, multilabel_confusion_matrix, roc_curve, roc_auc_score, RocCurveDisplay, f1_score
 from sklearn.preprocessing import MultiLabelBinarizer
 
 import argparse
@@ -21,6 +21,7 @@ import random
 import textwrap
 
 import itertools
+import numpy as np
 
 logging.basicConfig(level=logging.INFO, format='')
 
@@ -142,9 +143,8 @@ def main():
     print(confusion_mtrx)
     print('```\n')
 
-    if y_prob:  # TODO do probabilistic analysis; confidence and stuff?
-        pass
-        # evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
+    if y_prob:
+        evaluate_probabilistic(y_true, y_pred, y_prob, labels=args.labels, is_multilabel=args.multi)
 
     if args.errors:
         if texts and y_pred and y_true:
@@ -171,6 +171,43 @@ def probs_to_choices(y_pred_probs: list[list[float]], labels: list[str], is_mult
 
     y_pred = [probs_to_choices(probs) for probs in y_pred_probs]
     return y_pred
+
+
+def evaluate_probabilistic(y_true, y_pred, y_prob, labels, is_multilabel):
+    # TODO refactor / return a dict?
+    print('## ROC-AUC')
+    plt.figure(figsize=(6, 4))
+
+    best_thresholds_f1 = {}  # Store best thresholds using F1-score
+
+    for label_idx, label in enumerate(labels):
+        probs_for_label = [p[label_idx] for p in y_prob]
+        y_true_for_label = [label in labels for labels in y_true]
+
+        score = roc_auc_score(y_true_for_label, probs_for_label)
+
+        # Compute ROC curve
+        fpr, tpr, thresholds = roc_curve(y_true=y_true_for_label, y_score=probs_for_label)
+
+        f1_scores = []
+        for thresh in thresholds:
+            y_pred_thresh = [1 if p >= thresh else 0 for p in probs_for_label]
+            f1_scores.append(f1_score(y_true_for_label, y_pred_thresh))
+
+        best_thresh_idx_f1 = np.argmax(f1_scores)
+        best_threshold_f1 = thresholds[best_thresh_idx_f1]
+        best_thresholds_f1[label] = best_threshold_f1
+
+        print(f'{label}: {score:.3f} (best-F1 threshold at: {best_threshold_f1:.2f} [f1 = {f1_scores[best_thresh_idx_f1]:.2f}])')
+
+        fpr, tpr, thresholds = roc_curve(y_true=y_true_for_label, y_score=probs_for_label)
+        sns.lineplot(x=fpr, y=tpr, label=label, err_style=None)
+    sns.lineplot(x=fpr, y=fpr, label=None, linestyle=':')
+    plt.xlabel('False positive rate')
+    plt.ylabel('True positive rate')
+    plt.title('ROC for each category')
+
+    plt.show()
 
 
 def evaluate_categorical(y_true: list[set[str]] | list[str],
